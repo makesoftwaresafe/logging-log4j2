@@ -14,12 +14,15 @@
  * See the license for the specific language governing permissions and
  * limitations under the license.
  */
-
 package org.apache.logging.log4j.util;
 
+import java.lang.invoke.CallSite;
+import java.lang.invoke.LambdaMetafactory;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles.Lookup;
 import java.lang.invoke.MethodType;
+import java.security.AccessController;
+import java.security.PrivilegedAction;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -39,17 +42,16 @@ import org.apache.logging.log4j.status.StatusLogger;
  */
 public final class ServiceLoaderUtil {
 
-    private static final MethodType LOAD_CLASS_CLASSLOADER = MethodType.methodType(ServiceLoader.class, Class.class,
-            ClassLoader.class);
+    private static final int MAX_BROKEN_SERVICES = 8;
 
     private ServiceLoaderUtil() {
     }
 
     /**
      * Retrieves the available services from the caller's classloader.
-     * 
+     *
      * Broken services will be ignored.
-     * 
+     *
      * @param <T>         The service type.
      * @param serviceType The class of the service.
      * @param lookup      The calling class data.
@@ -62,9 +64,9 @@ public final class ServiceLoaderUtil {
     /**
      * Retrieves the available services from the caller's classloader and possibly
      * the thread context classloader.
-     * 
+     *
      * Broken services will be ignored.
-     * 
+     *
      * @param <T>         The service type.
      * @param serviceType The class of the service.
      * @param lookup      The calling class data.
@@ -102,8 +104,28 @@ public final class ServiceLoaderUtil {
     static <T> Iterable<T> callServiceLoader(Lookup lookup, Class<T> serviceType, ClassLoader classLoader,
             boolean verbose) {
         try {
-            final MethodHandle handle = lookup.findStatic(ServiceLoader.class, "load", LOAD_CLASS_CLASSLOADER);
-            final ServiceLoader<T> serviceLoader = (ServiceLoader<T>) handle.invokeExact(serviceType, classLoader);
+            // Creates a lambda in the caller's domain that calls `ServiceLoader`
+            final MethodHandle loadHandle = lookup.findStatic(ServiceLoader.class, "load",
+                    MethodType.methodType(ServiceLoader.class, Class.class, ClassLoader.class));
+            final CallSite callSite = LambdaMetafactory.metafactory(lookup,
+                    "run",
+                    MethodType.methodType(PrivilegedAction.class, Class.class, ClassLoader.class),
+                    MethodType.methodType(Object.class),
+                    loadHandle,
+                    MethodType.methodType(ServiceLoader.class));
+            final PrivilegedAction<ServiceLoader<T>> action = (PrivilegedAction<ServiceLoader<T>>) callSite
+                    .getTarget()//
+                    .bindTo(serviceType)
+                    .bindTo(classLoader)
+                    .invoke();
+            final ServiceLoader<T> serviceLoader;
+            if (System.getSecurityManager() == null) {
+                serviceLoader = action.run();
+            } else {
+                final MethodHandle privilegedHandle = lookup.findStatic(AccessController.class, "doPrivileged",
+                        MethodType.methodType(Object.class, PrivilegedAction.class));
+                serviceLoader = (ServiceLoader<T>) privilegedHandle.invoke(action);
+            }
             return serviceLoader;
         } catch (Throwable e) {
             if (verbose) {
@@ -111,7 +133,6 @@ public final class ServiceLoaderUtil {
             }
         }
         return Collections.emptyList();
-
     }
 
     private static class ServiceLoaderSpliterator<S> implements Spliterator<S> {
@@ -129,14 +150,22 @@ public final class ServiceLoaderUtil {
 
         @Override
         public boolean tryAdvance(Consumer<? super S> action) {
-            while (serviceIterator.hasNext()) {
+            int i = MAX_BROKEN_SERVICES;
+            while (i-- > 0) {
                 try {
-                    action.accept(serviceIterator.next());
-                    return true;
-                } catch (ServiceConfigurationError e) {
+                    if (serviceIterator.hasNext()) {
+                        action.accept(serviceIterator.next());
+                        return true;
+                    }
+                } catch (ServiceConfigurationError | LinkageError e) {
                     if (logger != null) {
                         logger.warn("Unable to load service class for service {}", serviceName, e);
                     }
+                } catch (Throwable e) {
+                    if (logger != null) {
+                        logger.warn("Unable to load service class for service {}", serviceName, e);
+                    }
+                    throw e;
                 }
             }
             return false;

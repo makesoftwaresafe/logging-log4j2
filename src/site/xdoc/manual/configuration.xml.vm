@@ -594,7 +594,10 @@ public class Bar {
               </tr>
               <tr>
                 <td>packages</td>
-                <td>A comma separated list of package names to search for plugins. Plugins are only loaded
+                <td><b>Use of the packages attribute is deprecated and will be removed in Log4j 3.0.</b> Plugins
+                  should be processed with the Log4j annotation processor.
+
+                  A comma separated list of package names to search for plugins. Plugins are only loaded
                   once per classloader so changing this value may not have any effect upon reconfiguration.</td>
               </tr>
               <tr>
@@ -649,7 +652,7 @@ public class Bar {
             The concise format makes configuration very easy as the element names match the components they represent
             however it cannot be validated with an XML schema. For example, the ConsoleAppender is configured by
             declaring an XML element named Console under its parent appenders element. However, element
-            and attribute names are are not case sensitive. In addition, attributes can either be specified
+            and attribute names are not case sensitive. In addition, attributes can either be specified
             as an XML attribute or as an XML element that has no attributes and has a text value. So
           </p>
           <pre class="prettyprint"><![CDATA[<PatternLayout pattern="%m%n"/>]]></pre>
@@ -2647,7 +2650,7 @@ public class AwesomeTest {
     <td>
       Default LoggerAdapter to use in the JUL adapter. By default, if log4j-core is available, then the class
       <code>org.apache.logging.log4j.jul .CoreLoggerAdapter</code> will be used. Otherwise, the
-      <code>ApiLogggerAdapter</code> will be used. Custom implementations must provide a public default constructor.
+      <code>ApiLoggerAdapter</code> will be used. Custom implementations must provide a public default constructor.
     </td>
   </tr>
   <tr>

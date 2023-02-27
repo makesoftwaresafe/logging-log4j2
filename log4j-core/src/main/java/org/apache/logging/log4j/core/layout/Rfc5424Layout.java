@@ -35,15 +35,15 @@ import org.apache.logging.log4j.core.Layout;
 import org.apache.logging.log4j.core.LogEvent;
 import org.apache.logging.log4j.core.appender.TlsSyslogFrame;
 import org.apache.logging.log4j.core.config.Configuration;
-import org.apache.logging.log4j.core.layout.internal.ExcludeChecker;
-import org.apache.logging.log4j.core.layout.internal.IncludeChecker;
-import org.apache.logging.log4j.core.layout.internal.ListChecker;
 import org.apache.logging.log4j.core.config.Node;
 import org.apache.logging.log4j.core.config.plugins.Plugin;
 import org.apache.logging.log4j.core.config.plugins.PluginAttribute;
 import org.apache.logging.log4j.core.config.plugins.PluginConfiguration;
 import org.apache.logging.log4j.core.config.plugins.PluginElement;
 import org.apache.logging.log4j.core.config.plugins.PluginFactory;
+import org.apache.logging.log4j.core.layout.internal.ExcludeChecker;
+import org.apache.logging.log4j.core.layout.internal.IncludeChecker;
+import org.apache.logging.log4j.core.layout.internal.ListChecker;
 import org.apache.logging.log4j.core.net.Facility;
 import org.apache.logging.log4j.core.net.Priority;
 import org.apache.logging.log4j.core.pattern.LogEventPatternConverter;
@@ -73,7 +73,7 @@ public final class Rfc5424Layout extends AbstractStringLayout {
     /**
      * The default example enterprise number from RFC5424.
      */
-    public static final String DEFAULT_ENTERPRISE_NUMBER = "32473";
+    public static final int DEFAULT_ENTERPRISE_NUMBER = 32473;
     /**
      * The default event id.
      */
@@ -85,6 +85,7 @@ public final class Rfc5424Layout extends AbstractStringLayout {
     /**
      * Match characters which require escaping.
      */
+    @Deprecated
     public static final Pattern PARAM_VALUE_ESCAPE_PATTERN = Pattern.compile("[\\\"\\]\\\\]");
 
     /**
@@ -570,7 +571,20 @@ public final class Rfc5424Layout extends AbstractStringLayout {
     }
 
     private String escapeSDParams(final String value) {
-        return PARAM_VALUE_ESCAPE_PATTERN.matcher(value).replaceAll("\\\\$0");
+        StringBuilder output = null;
+        for (int i = 0; i < value.length(); i++) {
+            final char cur = value.charAt(i);
+            if (cur == '"' || cur == ']' || cur == '\\') {
+                if (output == null) {
+                    output = new StringBuilder(value.substring(0, i));
+                }
+                output.append("\\");
+            }
+            if (output != null) {
+                output.append(cur);
+            }
+        }
+        return output != null ? output.toString() : value;
     }
 
     @Override
@@ -616,7 +630,7 @@ public final class Rfc5424Layout extends AbstractStringLayout {
             // @formatter:off
             @PluginAttribute(value = "facility", defaultString = "LOCAL0") final Facility facility,
             @PluginAttribute("id") final String id,
-            @PluginAttribute(value = "enterpriseNumber", defaultInt = -1)
+            @PluginAttribute(value = "enterpriseNumber", defaultInt = DEFAULT_ENTERPRISE_NUMBER)
             final int enterpriseNumber,
             @PluginAttribute(value = "includeMDC", defaultBoolean = true) final boolean includeMDC,
             @PluginAttribute(value = "mdcId", defaultString = DEFAULT_MDCID) final String mdcId,
@@ -647,13 +661,13 @@ public final class Rfc5424Layout extends AbstractStringLayout {
 
     public static class Rfc5424LayoutBuilder {
         private Configuration config;
-        private Facility facility;
+        private Facility facility = Facility.LOCAL0;
         private String id;
-        private String ein;
-        private boolean includeMDC;
+        private String ein = String.valueOf(DEFAULT_ENTERPRISE_NUMBER);
+        private boolean includeMDC = true;
         private boolean includeNL;
         private String escapeNL;
-        private String mdcId;
+        private String mdcId = DEFAULT_MDCID;
         private String mdcPrefix;
         private String eventPrefix;
         private String appName;
@@ -843,4 +857,21 @@ public final class Rfc5424Layout extends AbstractStringLayout {
     public Facility getFacility() {
         return facility;
     }
+
+    public String getDefaultId() {
+        return defaultId;
+    }
+
+    public String getEnterpriseNumber() {
+        return enterpriseNumber;
+    }
+
+    public boolean isIncludeMdc() {
+        return includeMdc;
+    }
+
+    public String getMdcId() {
+        return mdcId;
+    }
+
 }

@@ -24,7 +24,6 @@ import java.time.Duration;
 import java.time.temporal.ChronoUnit;
 import java.time.temporal.TemporalUnit;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -35,6 +34,7 @@ import java.util.ServiceLoader;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentSkipListSet;
 
 /**
  * <em>Consider this class private.</em>
@@ -120,6 +120,16 @@ public final class PropertiesUtil {
      */
     public static PropertiesUtil getProperties() {
         return LOG4J_PROPERTIES;
+    }
+
+    /**
+     * Allows a PropertySource to be added after PropertiesUtil has been created.
+     * @param propertySource the PropertySource to add.
+     */
+    public void addPropertySource(PropertySource propertySource) {
+        if (environment != null) {
+            environment.addPropertySource(propertySource);
+        }
     }
 
     /**
@@ -433,16 +443,11 @@ public final class PropertiesUtil {
      */
     private static class Environment {
 
-        private final Set<PropertySource> sources = new TreeSet<>(new PropertySource.Comparator());
+        private final Set<PropertySource> sources = new ConcurrentSkipListSet<>(new PropertySource.Comparator());
         /**
-         * Maps a key to its value in the lowest priority source that contains it.
+         * Maps a key to its value or the value of its normalization in the lowest priority source that contains it.
          */
         private final Map<String, String> literal = new ConcurrentHashMap<>();
-        /**
-         * Maps a key to the value associated to its normalization in the lowest
-         * priority source that contains it.
-         */
-        private final Map<String, String> normalized = new ConcurrentHashMap<>();
         private final Map<List<CharSequence>, String> tokenized = new ConcurrentHashMap<>();
 
         private Environment(final PropertySource propertySource) {
@@ -464,9 +469,16 @@ public final class PropertiesUtil {
             reload();
         }
 
+        /**
+         * Allow a PropertySource to be added.
+         * @param propertySource The PropertySource to add.
+         */
+        public void addPropertySource(PropertySource propertySource) {
+            sources.add(propertySource);
+        }
+
         private synchronized void reload() {
             literal.clear();
-            normalized.clear();
             tokenized.clear();
             // 1. Collects all property keys from enumerable sources.
             final Set<String> keys = new HashSet<>();
@@ -481,19 +493,21 @@ public final class PropertiesUtil {
                 .filter(Objects::nonNull)
                 .forEach(key -> {
                     final List<CharSequence> tokens = PropertySource.Util.tokenize(key);
+                    final boolean hasTokens = !tokens.isEmpty();
                     sources.forEach(source -> {
-                        final String value = source.getProperty(key);
-                        if (value != null) {
-                            literal.putIfAbsent(key, value);
-                            if (!tokens.isEmpty()) {
+                        if (source.containsProperty(key)) {
+                            final String value = source.getProperty(key);
+                            if (hasTokens) {
                                 tokenized.putIfAbsent(tokens, value);
                             }
                         }
-                        final CharSequence normalKey = source.getNormalForm(tokens);
-                        if (normalKey != null) {
-                            final String normalValue = source.getProperty(normalKey.toString());
-                            if (normalValue != null) {
-                                normalized.putIfAbsent(key, normalValue);
+                        if (hasTokens) {
+                            final String normalKey = Objects.toString(source.getNormalForm(tokens), null);
+                            if (normalKey != null && source.containsProperty(normalKey)) {
+                                literal.putIfAbsent(key, source.getProperty(normalKey));
+                            }
+                            else if(source.containsProperty(key)) {
+                                literal.putIfAbsent(key, source.getProperty(key));
                             }
                         }
                     });
@@ -501,25 +515,20 @@ public final class PropertiesUtil {
         }
 
         private String get(final String key) {
-            if (normalized.containsKey(key)) {
-                return normalized.get(key);
-            }
             if (literal.containsKey(key)) {
                 return literal.get(key);
             }
             final List<CharSequence> tokens = PropertySource.Util.tokenize(key);
+            final boolean hasTokens = !tokens.isEmpty();
             for (final PropertySource source : sources) {
-                final String normalKey = Objects.toString(source.getNormalForm(tokens), null);
-                if (normalKey != null && source.containsProperty(normalKey)) {
-                    final String normalValue = source.getProperty(normalKey);
-                    // Caching previously unknown keys breaks many tests which set and unset system properties
-                    // normalized.put(key, normalValue);
-                    return normalValue;
+                if (hasTokens) {
+                    final String normalKey = Objects.toString(source.getNormalForm(tokens), null);
+                    if (normalKey != null && source.containsProperty(normalKey)) {
+                        return source.getProperty(normalKey);
+                    }
                 }
                 if (source.containsProperty(key)) {
-                    final String value = source.getProperty(key);
-                    // literal.put(key, value);
-                    return value;
+                    return source.getProperty(key);
                 }
             }
             return tokenized.get(tokens);
@@ -527,8 +536,7 @@ public final class PropertiesUtil {
 
         private boolean containsKey(final String key) {
             List<CharSequence> tokens = PropertySource.Util.tokenize(key);
-            return normalized.containsKey(key) ||
-                   literal.containsKey(key) ||
+            return literal.containsKey(key) ||
                    tokenized.containsKey(tokens) ||
                    sources.stream().anyMatch(s -> {
                         final CharSequence normalizedKey = s.getNormalForm(tokens);
